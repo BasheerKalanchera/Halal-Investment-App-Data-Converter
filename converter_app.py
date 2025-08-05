@@ -11,7 +11,7 @@ from langchain_community.vectorstores import FAISS
 from langchain.docstore.document import Document
 
 # --- File Paths and URLs ---
-REPO_URL = "https://github.com/BasheerKalanchera/Halal-Gold-Investment-Assistant.git"
+REPO_URL = "https://github.com/BasheerKalanchera/Halal-Investment-App-Data-Converter.git"
 FAISS_FILE = "knowledge_base.faiss"
 DOCS_FILE = "knowledge_base.pkl"
 LOCAL_CLONE_PATH = "./temp_repo"
