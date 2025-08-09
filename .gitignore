@@ -1,9 +1,22 @@
-# Virtual environment
+# Runtime index cache created by the RAG app
+faiss_index/
+
+# Temporary repository clone created by the converter app
+temp_repo/
+
+# Python virtual environment - contains local packages
+.venv/
 venv/
+
 # Byte-code files
 *.pyc
+__pycache__/
+
 # Logs
 *.log
+
 # OS generated files
 .DS_Store
+
+# Environment variables - contains secrets!
 .env

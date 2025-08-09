@@ -21,30 +21,44 @@ from dotenv import load_dotenv
 # --- Load .env for local development ---
 load_dotenv()
 
-# Fallback for local .env if Streamlit secrets are not defined
+# --- GCP Service Account Authentication ---
+GCP_SA = None
 try:
-    _ = st.secrets["gcp_service_account"]
+    GCP_SA = st.secrets["gcp_service_account"]
 except Exception:
-    if st.secrets._secrets is None:
-        st.secrets._secrets = {}
-    st.secrets._secrets["gcp_service_account"] = {
-        "type": os.getenv("GCP_TYPE"),
-        "project_id": os.getenv("GCP_PROJECT_ID"),
-        "private_key_id": os.getenv("GCP_PRIVATE_KEY_ID"),
-        "private_key": os.getenv("GCP_PRIVATE_KEY").replace("\\n", "\n"),
-        "client_email": os.getenv("GCP_CLIENT_EMAIL"),
-        "client_id": os.getenv("GCP_CLIENT_ID"),
-        "auth_uri": os.getenv("GCP_AUTH_URI"),
-        "token_uri": os.getenv("GCP_TOKEN_URI"),
-        "auth_provider_x509_cert_url": os.getenv("GCP_AUTH_PROVIDER_CERT_URL"),
-        "client_x509_cert_url": os.getenv("GCP_CLIENT_CERT_URL"),
-    }
+    # Fallback to .env for local development
+    try:
+        gcp_sa_details = {
+            "type": os.getenv("GCP_TYPE"),
+            "project_id": os.getenv("GCP_PROJECT_ID"),
+            "private_key_id": os.getenv("GCP_PRIVATE_KEY_ID"),
+            "private_key": os.getenv("GCP_PRIVATE_KEY").replace("\\n", "\n"),
+            "client_email": os.getenv("GCP_CLIENT_EMAIL"),
+            "client_id": os.getenv("GCP_CLIENT_ID"),
+            "auth_uri": os.getenv("GCP_AUTH_URI"),
+            "token_uri": os.getenv("GCP_TOKEN_URI"),
+            "auth_provider_x509_cert_url": os.getenv("GCP_AUTH_PROVIDER_X509_CERT_URL"),
+            "client_x509_cert_url": os.getenv("GCP_CLIENT_X509_CERT_URL"),
+        }
+        # st.write(gcp_sa_details) # <-- ADD THIS LINE
+        if all(gcp_sa_details.values()):
+            GCP_SA = gcp_sa_details
+    except Exception as e:
+        st.error(f"Error loading GCP service account from .env: {e}")
+        st.stop()
+
+if not GCP_SA:
+    st.error("GCP service account details not found. Please set them in Streamlit secrets or your .env file.")
+    st.stop()
+
 
 # --- Constants ---
-# These are the pre-built files created by the converter app.
-FAISS_FILE = "knowledge_base.faiss"
-DOCS_FILE = "knowledge_base.pkl"
+FAISS_DIR = "faiss_index"
 GITHUB_RAW_URL = "https://raw.githubusercontent.com/BasheerKalanchera/Halal-Investment-App-Data-Converter/main"
+
+# Ensure your read-only PAT is also loaded from .env
+GITHUB_READ_TOKEN = os.getenv("GITHUB_READ_TOKEN")
+
 
 # --- Logging unanswered questions to Google Sheets ---
 def log_unanswered_to_google_sheets(user_query, user_id="Anonymous"):
@@ -53,8 +67,7 @@ def log_unanswered_to_google_sheets(user_query, user_id="Anonymous"):
             "https://spreadsheets.google.com/feeds",
             "https://www.googleapis.com/auth/drive"
         ]
-        creds_dict = st.secrets["gcp_service_account"]
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(GCP_SA, scope)
         client = gspread.authorize(creds)
         sheet = client.open("HalalGold_UnansweredLogs").sheet1
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -66,7 +79,7 @@ def log_unanswered_to_google_sheets(user_query, user_id="Anonymous"):
 @st.cache_resource
 def load_embedding_model():
     return HuggingFaceEmbeddings(
-        model_name="hkunlp/instructor-large",
+        model_name="sentence-transformers/all-MiniLM-L6-v2",
         model_kwargs={"device": "cpu"}
     )
 
@@ -74,44 +87,43 @@ def load_embedding_model():
 @st.cache_resource
 def create_retriever_from_github():
     _embeddings = load_embedding_model()
-    
-    st.write("Downloading pre-built FAISS index and documents from GitHub...")
+
+    st.write("Downloading knowledge base from GitHub...")
     try:
-        # Download files directly from the main branch of your new repository
-        faiss_data = requests.get(f"{GITHUB_RAW_URL}/{FAISS_FILE}").content
-        docs_data = requests.get(f"{GITHUB_RAW_URL}/{DOCS_FILE}").content
+        # We only need index.faiss and index.pkl created by vectorstore.save_local()
+        headers = {"Authorization": f"token {GITHUB_READ_TOKEN}"}
+        faiss_url = f"{GITHUB_RAW_URL}/{FAISS_DIR}/index.faiss"
+        pkl_url = f"{GITHUB_RAW_URL}/{FAISS_DIR}/index.pkl"
 
-        # Save to a temporary local file
-        with open(FAISS_FILE, "wb") as f:
+        faiss_data = requests.get(faiss_url, headers=headers).content
+        pkl_data = requests.get(pkl_url, headers=headers).content
+
+        # Create local directory and write files
+        os.makedirs(FAISS_DIR, exist_ok=True)
+        with open(os.path.join(FAISS_DIR, "index.faiss"), "wb") as f:
             f.write(faiss_data)
-        with open(DOCS_FILE, "wb") as f:
-            f.write(docs_data)
+        with open(os.path.join(FAISS_DIR, "index.pkl"), "wb") as f:
+            f.write(pkl_data)
 
-        # Load the pre-built vector store and documents
-        vectorstore = FAISS.load_local(".", _embeddings, allow_dangerous_deserialization=True)
-        with open(DOCS_FILE, "rb") as f:
-            parent_chunks = pickle.load(f)
+        st.write("Loading FAISS index...")
+        # Load the FAISS index from the downloaded files
+        vectorstore = FAISS.load_local(FAISS_DIR, _embeddings, allow_dangerous_deserialization=True)
 
-        id_key = "doc_id"
-        store = InMemoryStore()
-        retriever = MultiVectorRetriever(vectorstore=vectorstore, docstore=store, id_key=id_key)
+        st.success("✅ Knowledge base loaded successfully!")
         
-        doc_ids = [hashlib.sha256(doc.page_content.encode()).hexdigest() for doc in parent_chunks]
-        retriever.docstore.mset(list(zip(doc_ids, parent_chunks)))
-
-        st.success("Successfully loaded knowledge base from GitHub!")
-        return retriever
+        # Return the simple, standard retriever
+        return vectorstore.as_retriever(search_kwargs={"k": 10})
 
     except Exception as e:
-        st.error(f"Failed to download or load knowledge base from GitHub: {e}. Please ensure converter app has been run.")
+        st.error(f"❌ Failed to download or load knowledge base from GitHub: {e}")
         st.stop()
+
 
 
 # --- Load LLM and retriever ---
 llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0)
-# Changed to call the new retriever function
 retriever = create_retriever_from_github()
-retriever.search_kwargs = {"k": 10}
+
 
 # --- Prompt template ---
 prompt_template = """
