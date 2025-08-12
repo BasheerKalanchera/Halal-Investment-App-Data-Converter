@@ -23,21 +23,21 @@ load_dotenv()
 import streamlit.components.v1 as components
 import time
 
-# --- Place the CSS code right after your imports ---
+# --- HIDE STREAMLIT STYLE ---
 hide_streamlit_style = """
 <style>
-/* Hide the app creator avatar */
-[data-testid="appCreatorAvatar"] {
-    display: none;
-}
-/* Hide the Streamlit viewer badge */
-a[href="https://streamlit.io/cloud"] {
-    display: none;
-}
+    /* Hide the app creator avatar with !important */
+    [data-testid="appCreatorAvatar"] {
+        display: none !important;
+    }
+    /* Hide the Streamlit viewer badge with !important */
+    a[href="https://streamlit.io/cloud"] {
+        display: none !important;
+    }
 </style>
 """
 st.markdown(hide_streamlit_style, unsafe_allow_html=True)
-# --- End of style code ---
+# --- END HIDE STYLE ---
 
 def scroll_to_bottom():
     """A small JavaScript component that scrolls the chat container to the bottom."""
