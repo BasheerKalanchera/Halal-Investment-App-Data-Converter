@@ -1,7 +1,7 @@
 streamlit
 python-dotenv
 gspread
-oauth2client-service-account
+oauth2client
 langchain
 langchain-google-genai
 langchain-community
