@@ -1,0 +1,12 @@
+streamlit
+python-dotenv
+gspread
+oauth2client-service-account
+langchain
+langchain-google-genai
+langchain-community
+langchain-huggingface
+sentence-transformers
+faiss-cpu
+requests
+gitpython
