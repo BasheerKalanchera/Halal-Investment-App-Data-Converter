@@ -20,6 +20,23 @@ from dotenv import load_dotenv
 
 # --- Load .env for local development ---
 load_dotenv()
+import streamlit.components.v1 as components
+import time
+
+def scroll_to_bottom():
+    """A small JavaScript component that scrolls the chat container to the bottom."""
+    js = f"""
+    <script>
+        function scroll(dummy_var_to_force_re_execution) {{
+            var chat_container = parent.document.querySelector('div[style*="height: 400px"]');
+            if (chat_container) {{
+                chat_container.scrollTop = chat_container.scrollHeight;
+            }}
+        }}
+        scroll({time.time()});
+    </script>
+    """
+    components.html(js, height=0, scrolling=False)
 
 # --- GCP Service Account Authentication ---
 GCP_SA = None
@@ -40,7 +57,6 @@ except Exception:
             "auth_provider_x509_cert_url": os.getenv("GCP_AUTH_PROVIDER_X509_CERT_URL"),
             "client_x509_cert_url": os.getenv("GCP_CLIENT_X509_CERT_URL"),
         }
-        # st.write(gcp_sa_details) # <-- ADD THIS LINE
         if all(gcp_sa_details.values()):
             GCP_SA = gcp_sa_details
     except Exception as e:
@@ -84,39 +100,36 @@ def load_embedding_model():
     )
 
 # --- Retriever setup (FAST STARTUP VERSION) ---
-@st.cache_resource
+@st.cache_resource(show_spinner=False)
 def create_retriever_from_github():
-    _embeddings = load_embedding_model()
+    with st.spinner("Loading up your Aisar - Halal Gold investment assistant... Please wait."):
+        _embeddings = load_embedding_model()
 
-    st.write("Downloading knowledge base from GitHub...")
-    try:
-        # We only need index.faiss and index.pkl created by vectorstore.save_local()
-        headers = {"Authorization": f"token {GITHUB_READ_TOKEN}"}
-        faiss_url = f"{GITHUB_RAW_URL}/{FAISS_DIR}/index.faiss"
-        pkl_url = f"{GITHUB_RAW_URL}/{FAISS_DIR}/index.pkl"
+        #st.write("Downloading knowledge base from GitHub...")
+        try:
+            headers = {"Authorization": f"token {GITHUB_READ_TOKEN}"}
+            faiss_url = f"{GITHUB_RAW_URL}/{FAISS_DIR}/index.faiss"
+            pkl_url = f"{GITHUB_RAW_URL}/{FAISS_DIR}/index.pkl"
 
-        faiss_data = requests.get(faiss_url, headers=headers).content
-        pkl_data = requests.get(pkl_url, headers=headers).content
+            faiss_data = requests.get(faiss_url, headers=headers).content
+            pkl_data = requests.get(pkl_url, headers=headers).content
 
-        # Create local directory and write files
-        os.makedirs(FAISS_DIR, exist_ok=True)
-        with open(os.path.join(FAISS_DIR, "index.faiss"), "wb") as f:
-            f.write(faiss_data)
-        with open(os.path.join(FAISS_DIR, "index.pkl"), "wb") as f:
-            f.write(pkl_data)
+            os.makedirs(FAISS_DIR, exist_ok=True)
+            with open(os.path.join(FAISS_DIR, "index.faiss"), "wb") as f:
+                f.write(faiss_data)
+            with open(os.path.join(FAISS_DIR, "index.pkl"), "wb") as f:
+                f.write(pkl_data)
 
-        st.write("Loading FAISS index...")
-        # Load the FAISS index from the downloaded files
-        vectorstore = FAISS.load_local(FAISS_DIR, _embeddings, allow_dangerous_deserialization=True)
+            #st.write("Loading FAISS index...")
+            vectorstore = FAISS.load_local(FAISS_DIR, _embeddings, allow_dangerous_deserialization=True)
 
-        st.success("✅ Knowledge base loaded successfully!")
+            #st.success("✅ Knowledge base loaded successfully!")
         
-        # Return the simple, standard retriever
-        return vectorstore.as_retriever(search_kwargs={"k": 10})
+            return vectorstore.as_retriever(search_kwargs={"k": 10})
 
-    except Exception as e:
-        st.error(f"❌ Failed to download or load knowledge base from GitHub: {e}")
-        st.stop()
+        except Exception as e:
+            st.error(f"❌ Failed to download or load knowledge base from GitHub: {e}")
+            st.stop()
 
 
 
@@ -149,37 +162,76 @@ qa_chain = RetrievalQA.from_chain_type(
 )
 
 # --- Streamlit UI ---
-st.set_page_config(page_title="Halal Gold Investment Assistant", layout="centered")
+st.set_page_config(page_title="Halal Gold Investment Assistant", layout="wide")
 
 st.title("💰 Aisar - Halal Gold Investment Assistant")
 
-st.warning("""
-Disclaimer: This tool is not intended as investment or Shariah advice. Users should not rely on its responses for financial decisions and are advised to consult with a registered financial advisor or qualified Shariah scholar.
-""")
+st.warning(
+    """
+**Disclaimer:** This tool is not intended as investment or Shariah advice. Users should not rely on its responses for financial decisions and are advised to consult with a registered financial advisor or qualified Shariah scholar.
+"""
+)
 
-# Optional user ID
-if "user_id" not in st.session_state:
-    st.session_state["user_id"] = ""
-st.session_state["user_id"] = st.text_input("Enter your name or email (optional):", value=st.session_state["user_id"])
+# Optional user ID in sidebar for a cleaner look
+with st.sidebar:
+    st.header("User Details")
+    if "user_id" not in st.session_state:
+        st.session_state["user_id"] = ""
+    st.session_state["user_id"] = st.text_input(
+        "Enter your name or email (optional):", value=st.session_state["user_id"]
+    )
 
-user_query = st.text_area("Enter your question about Halal ways to invest in Gold here:", height=100)
 
-if st.button("Get Answer"):
-    if user_query:
-        with st.spinner("Searching and generating answer..."):
-            try:
-                result = qa_chain.invoke({"query": user_query})
-                answer = result["result"]
-                st.subheader("Answer:")
-                st.info(answer)
+# --- Chat History Implementation ---
 
-                fallback_message = "I don't have enough information in the provided documents to answer this question."
-                if fallback_message in answer:
-                    log_unanswered_to_google_sheets(user_query.strip(), st.session_state["user_id"] or "Anonymous")
+# Initialize chat history in session state
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
-            except Exception as e:
-                st.error(f"An error occurred: {e}")
-    else:
-        st.warning("Please enter a question to get an answer.")
+# Create a container for the chat history
+chat_container = st.container(height=400, border=False)
 
-st.markdown("---")
+# Display prior chat messages from session state
+for message in st.session_state.messages:
+    with chat_container.chat_message(message["role"]):
+        st.markdown(message["content"])
+
+# Handle new user input
+if user_query := st.chat_input("Enter your question about Halal ways to invest in Gold here:"):
+    # Add user message to state and immediately display it
+    st.session_state.messages.append({"role": "user", "content": user_query})
+    with chat_container.chat_message("user"):
+        st.markdown(user_query)
+
+    # Use a placeholder for the assistant's response
+    with chat_container.chat_message("assistant"):
+        # 1. Create a single placeholder
+        placeholder = st.empty()
+
+        try:
+            # 2. Put a temporary message in the placeholder
+            placeholder.markdown("Searching and generating answer...")
+            
+            # 3. Get the actual answer
+            result = qa_chain.invoke({"query": user_query})
+            answer = result["result"]
+            
+            # 4. Replace the temporary message with the final answer
+            placeholder.markdown(answer)
+
+            # Log to Google Sheets if the answer is a fallback
+            fallback_message = "I don't have enough information in the provided documents to answer this question."
+            if fallback_message in answer:
+                log_unanswered_to_google_sheets(
+                    user_query.strip(), st.session_state["user_id"] or "Anonymous"
+                )
+        except Exception as e:
+            answer = f"An error occurred: {e}"
+            # Or replace with an error message
+            placeholder.error(answer)
+
+    # Add the final assistant's response to the session state
+    st.session_state.messages.append({"role": "assistant", "content": answer})
+
+    # Call the scroll-to-bottom function
+    scroll_to_bottom()
