@@ -18,6 +18,7 @@ from langchain.retrievers.multi_vector import MultiVectorRetriever
 from langchain.docstore.document import Document
 from dotenv import load_dotenv
 
+
 # --- Load .env for local development ---
 load_dotenv()
 import streamlit.components.v1 as components
@@ -150,7 +151,7 @@ def create_retriever_from_github():
 
 
 # --- Load LLM and retriever ---
-llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0)
+llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=0)
 retriever = create_retriever_from_github()
 
 

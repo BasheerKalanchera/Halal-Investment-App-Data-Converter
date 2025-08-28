@@ -88,6 +88,9 @@ def run_converter_app():
     st.info("Upload a .docx file to update the app's knowledge base on GitHub.")
     uploaded_file = st.file_uploader("Choose a .docx file", type=["docx"])
 
+    # --- MODIFICATION 1: ADDED CHECKBOX ---
+    rebuild_from_scratch = st.checkbox("Rebuild knowledge base from scratch (deletes all old entries)")
+
     if uploaded_file and st.button("Update Knowledge Base"):
         with st.spinner("Processing..."):
             repo_path = LOCAL_CLONE_PATH
@@ -101,19 +104,24 @@ def run_converter_app():
             full_faiss_path = os.path.join(repo_path, FAISS_DIR)
             embeddings = load_embedding_model()
             
-            st.write("Loading existing knowledge base...")
-            existing_docs_map = {}
-            if os.path.exists(full_faiss_path):
-                try:
-                    vectorstore = FAISS.load_local(full_faiss_path, embeddings, allow_dangerous_deserialization=True)
-                    for doc in vectorstore.docstore._dict.values():
-                        if 'question' in doc.metadata:
-                            existing_docs_map[doc.metadata['question']] = doc
-                    st.success(f"Successfully loaded {len(existing_docs_map)} existing documents.")
-                except Exception as e:
-                    st.warning(f"Could not load existing index, will create a new one. Error: {e}")
+            # --- MODIFICATION 2: MADE LOADING CONDITIONAL ---
+            existing_docs_map = {} # Initialize an empty map
+
+            if not rebuild_from_scratch:
+                st.write("Loading existing knowledge base...")
+                if os.path.exists(full_faiss_path):
+                    try:
+                        vectorstore = FAISS.load_local(full_faiss_path, embeddings, allow_dangerous_deserialization=True)
+                        for doc in vectorstore.docstore._dict.values():
+                            if 'question' in doc.metadata:
+                                existing_docs_map[doc.metadata['question']] = doc
+                        st.success(f"Successfully loaded {len(existing_docs_map)} existing documents.")
+                    except Exception as e:
+                        st.warning(f"Could not load existing index, will create a new one. Error: {e}")
+                else:
+                    st.info("No existing knowledge base found.")
             else:
-                st.info("No existing knowledge base found.")
+                st.warning("Rebuild from scratch selected. Existing knowledge base will be ignored.")
 
             temp_docx_path = f"temp_{uploaded_file.name}"
             with open(temp_docx_path, "wb") as f:
@@ -143,7 +151,6 @@ def run_converter_app():
             
             st.write(f"Processing: {additions} new document(s) and {updates} updated document(s).")
             
-            # --- FINAL FIX: Create a clean list of documents before rebuilding ---
             st.write("Purifying final document list...")
             clean_final_documents = []
             for doc in existing_docs_map.values():
