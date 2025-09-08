@@ -65,14 +65,39 @@ class GspreadChatMessageHistory(BaseChatMessageHistory):
 
     @property
     def messages(self):
-        records = self.sheet.get_all_records()
+        """
+        Efficiently retrieves chat messages for a specific session_id
+        by finding matching rows and then fetching their content in a batch.
+        """
         messages = []
-        for record in records:
-            if record["UserID"] == self.session_id:
-                if record["Role"] == "user":
-                    messages.append(HumanMessage(content=record["Content"]))
-                elif record["Role"] == "assistant":
-                    messages.append(AIMessage(content=record["Content"]))
+        try:
+            # Find all cells in the second column (B) that match the session_id
+            user_cells = self.sheet.findall(self.session_id, in_column=2)
+        except gspread.exceptions.CellNotFound:
+            # If no cells are found for the user, return an empty history
+            return []
+
+        # Create a list of A1 notation ranges to fetch all rows at once
+        ranges_to_get = [f'A{cell.row}:D{cell.row}' for cell in user_cells]
+
+              
+        if not ranges_to_get:
+            return []
+            
+        # Get all row data in a single batch API call, which is highly efficient
+        all_row_data = self.sheet.batch_get(ranges_to_get)
+
+        # Process the batch data
+        for row_group in all_row_data:
+            for row in row_group:
+                # Assuming columns are: Timestamp(A), UserID(B), Role(C), Content(D)
+                if len(row) >= 4:
+                    role = row[2]
+                    content = row[3]
+                    if role == "user":
+                        messages.append(HumanMessage(content=content))
+                    elif role == "assistant":
+                        messages.append(AIMessage(content=content))
         return messages
 
     def add_messages(self, messages):
@@ -86,17 +111,6 @@ class GspreadChatMessageHistory(BaseChatMessageHistory):
 
     def clear(self):
         pass
-
-# --- NEW: Function to get a list of all user questions ---
-def get_user_questions(session_id: str):
-    client = get_gspread_client()
-    sheet = client.open("HalalGold_UnansweredLogs").worksheet("ChatHistory")
-    records = sheet.get_all_records()
-    questions = []
-    for record in records:
-        if record["UserID"] == session_id and record["Role"] == "user":
-            questions.append(record["Content"])
-    return questions
 
 # --- Model and Retriever Loading ---
 @st.cache_resource
@@ -132,10 +146,10 @@ except (KeyError, FileNotFoundError):
     MODEL_NAME = os.getenv("MODEL_NAME")
 
 if not MODEL_NAME:
-    st.warning("MODEL_NAME not found in secrets or .env. Using default: gemini-1.5-flash")
-    MODEL_NAME = "gemini-1.5-flash"
+    st.warning("MODEL_NAME not found in secrets or .env. Using default: gemini-1.5-pro")
+    MODEL_NAME = "gemini-1.5-pro" # Changed to a more capable model by default
 
-llm = ChatGoogleGenerativeAI(model=MODEL_NAME, temperature=0)
+llm = ChatGoogleGenerativeAI(model=MODEL_NAME, temperature=0,max_output_tokens=2048)
 retriever = create_retriever_from_github()
 
 _condense_question_prompt = ChatPromptTemplate.from_messages([
@@ -171,13 +185,26 @@ answer_chain = _answer_prompt | llm | StrOutputParser()
 def _format_docs(docs):
     return "\n\n".join(d.page_content for d in docs)
 
-context_retrieval = RunnableLambda(
-    lambda x: condense_question_chain.invoke({"chat_history": x["chat_history"], "question": x["question"]})
-) | retriever | _format_docs
+# --- UPDATED CONVERSATIONAL CHAIN LOGIC ---
+def route_question(input_dict):
+    """
+    If there is chat history, condense the question.
+    Otherwise, use the original question for retrieval.
+    """
+    if input_dict.get("chat_history"):
+        return condense_question_chain
+    else:
+        return itemgetter("question")
 
-conversational_rag_chain = RunnablePassthrough.assign(
-    context=context_retrieval
-) | answer_chain
+context_retrieval_chain = RunnablePassthrough.assign(
+    standalone_question=route_question
+) | {
+    "context": itemgetter("standalone_question") | retriever | _format_docs,
+    "question": itemgetter("question"), # Explicitly pass the original question through
+    "chat_history": itemgetter("chat_history")
+}
+
+conversational_rag_chain = context_retrieval_chain | answer_chain
 
 # --- Main App UI ---
 st.set_page_config(page_title="Halal Gold Investment Assistant", layout="wide")
@@ -226,16 +253,23 @@ if user_query := st.chat_input("Enter your question about Halal ways to invest i
         placeholder = st.empty()
         full_response = ""
         
-        # --- NEW: Check for list questions intent ---
+        # --- Check for list questions intent ---
         if "list of questions" in user_query.lower() or "what have i asked" in user_query.lower():
-            questions = get_user_questions(st.session_state.user_id)
-            if questions:
-                full_response = "Here is the list of questions you've asked:\n\n" + "\n".join([f"* {q}" for q in questions])
+            # Filter the messages already in session state (in memory)
+            user_questions = [
+                msg.content for msg in st.session_state.messages 
+                if isinstance(msg, HumanMessage)
+            ]
+            
+            if user_questions:
+                # Create the formatted list, excluding the current "list my questions" query
+                response_list = "\n".join([f"* {q}" for q in user_questions if "list of questions" not in q.lower() and "what have i asked" not in q.lower()])
+                full_response = "Here is the list of questions you've asked:\n\n" + response_list
             else:
                 full_response = "I don't have a record of any questions from you yet."
             placeholder.markdown(full_response)
         else:
-            # --- Existing conversational RAG chain logic ---
+            # --- This is now the production code ---
             chain_with_history = RunnableWithMessageHistory(
                 conversational_rag_chain,
                 lambda session_id: GspreadChatMessageHistory(session_id),
@@ -253,5 +287,5 @@ if user_query := st.chat_input("Enter your question about Halal ways to invest i
                 st.error(f"An error occurred: {e}")
                 full_response = "Sorry, I ran into an error. Please try again."
                 placeholder.markdown(full_response)
-    
+
     st.session_state.messages.append(AIMessage(content=full_response))
