@@ -147,7 +147,7 @@ except (KeyError, FileNotFoundError):
 
 if not MODEL_NAME:
     st.warning("MODEL_NAME not found in secrets or .env. Using default: gemini-1.5-pro")
-    MODEL_NAME = "gemini-1.5-pro" # Changed to a more capable model by default
+    MODEL_NAME = "gemini-1.5-pro" # Using a more capable model by default
 
 llm = ChatGoogleGenerativeAI(model=MODEL_NAME, temperature=0,max_output_tokens=2048)
 retriever = create_retriever_from_github()
@@ -208,7 +208,18 @@ conversational_rag_chain = context_retrieval_chain | answer_chain
 
 # --- Main App UI ---
 st.set_page_config(page_title="Halal Gold Investment Assistant", layout="wide")
-st.title("💰 Aisar - Halal Gold Investment Assistant")
+#st.title("💰 Aisar - Halal Gold Investment Assistant")
+# --- HEADER SECTION ---
+col1, col2 = st.columns([1, 12])  # Creates two columns for alignment
+
+with col1:
+    # Display your logo in the first column
+   st.image("assets/logo.png", width=150)
+
+with col2:
+    # Display your title in the second column (without the emoji)
+   st.title("- Halal Gold Investment Assistant")
+
 st.warning(
     "**Disclaimer:** This tool is not intended as investment or Shariah advice. Users should not rely on its responses for financial decisions and are advised to consult with a registered financial advisor or qualified Shariah scholar."
 )
