@@ -20,3 +20,6 @@ __pycache__/
 
 # Environment variables - contains secrets!
 .env
+
+# Ignore generated FAISS index files
+faiss_index/

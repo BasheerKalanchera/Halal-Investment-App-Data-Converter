@@ -149,6 +149,7 @@ if not MODEL_NAME:
     st.warning("MODEL_NAME not found in secrets or .env. Using default: gemini-1.5-pro")
     MODEL_NAME = "gemini-1.5-pro" # Using a more capable model by default
 
+
 llm = ChatGoogleGenerativeAI(model=MODEL_NAME, temperature=0,max_output_tokens=2048)
 retriever = create_retriever_from_github()
 
