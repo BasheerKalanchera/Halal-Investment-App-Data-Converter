@@ -23,3 +23,6 @@ __pycache__/
 
 # Ignore generated FAISS index files
 faiss_index/
+
+# Ignore assets files backup
+assets - backup/

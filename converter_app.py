@@ -46,7 +46,7 @@ def load_embedding_model():
     )
 
 # --- Document Parser ---
-def parse_docx_for_qas(file_path):
+def parse_docx_for_qas(file_path, file_name): # Added file_name as an argument
     try:
         doc = DocxDocument(file_path)
         qa_pairs = []
@@ -60,7 +60,8 @@ def parse_docx_for_qas(file_path):
                 if p_text.lower() == 'question':
                     if q_text and a_text_parts:
                         answer = "\n".join(a_text_parts).strip()
-                        qa_pairs.append(LangchainDocument(page_content=answer, metadata={"question": q_text}))
+                        # UPDATED: Added the "source" key to the metadata
+                        qa_pairs.append(LangchainDocument(page_content=answer, metadata={"question": q_text, "source": file_name}))
                     q_text = None
                     a_text_parts = []
                 elif q_text is None and p_text:
@@ -75,7 +76,8 @@ def parse_docx_for_qas(file_path):
         
         if q_text and a_text_parts:
             answer = "\n".join(a_text_parts).strip()
-            qa_pairs.append(LangchainDocument(page_content=answer, metadata={"question": q_text}))
+            # UPDATED: Added the "source" key to the metadata
+            qa_pairs.append(LangchainDocument(page_content=answer, metadata={"question": q_text, "source": file_name}))
 
         return qa_pairs
     except Exception as e:
@@ -88,7 +90,6 @@ def run_converter_app():
     st.info("Upload a .docx file to update the app's knowledge base on GitHub.")
     uploaded_file = st.file_uploader("Choose a .docx file", type=["docx"])
 
-    # --- MODIFICATION 1: ADDED CHECKBOX ---
     rebuild_from_scratch = st.checkbox("Rebuild knowledge base from scratch (deletes all old entries)")
 
     if uploaded_file and st.button("Update Knowledge Base"):
@@ -104,8 +105,7 @@ def run_converter_app():
             full_faiss_path = os.path.join(repo_path, FAISS_DIR)
             embeddings = load_embedding_model()
             
-            # --- MODIFICATION 2: MADE LOADING CONDITIONAL ---
-            existing_docs_map = {} # Initialize an empty map
+            existing_docs_map = {} 
 
             if not rebuild_from_scratch:
                 st.write("Loading existing knowledge base...")
@@ -126,7 +126,10 @@ def run_converter_app():
             temp_docx_path = f"temp_{uploaded_file.name}"
             with open(temp_docx_path, "wb") as f:
                 f.write(uploaded_file.getbuffer())
-            new_docs_from_file = parse_docx_for_qas(temp_docx_path)
+            
+            # UPDATED: Pass the uploaded file's name to the parser
+            new_docs_from_file = parse_docx_for_qas(temp_docx_path, uploaded_file.name)
+            
             os.remove(temp_docx_path)
             st.success(f"Parsed {len(new_docs_from_file)} Q&A pairs from the .docx file.")
 
@@ -154,10 +157,11 @@ def run_converter_app():
             st.write("Purifying final document list...")
             clean_final_documents = []
             for doc in existing_docs_map.values():
+                # Ensure the source is carried over to the final list
                 clean_final_documents.append(
                     LangchainDocument(
                         page_content=doc.page_content,
-                        metadata={"question": doc.metadata["question"]}
+                        metadata={"question": doc.metadata["question"], "source": doc.metadata.get("source", "Unknown")}
                     )
                 )
 
